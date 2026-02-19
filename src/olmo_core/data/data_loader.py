@@ -385,6 +385,19 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         self._global_indices: Optional[np.ndarray] = None
         self.ignore_fingerprint_mismatch = ignore_fingerprint_mismatch
 
+        ### Pretrain-Experiments Data Insertion ###
+        import os
+
+        _insertion_map_path = os.environ.get("OLMO_CORE_INSERTION_MAP_FILE")
+        if _insertion_map_path:
+            from .insertion_map import InsertionMapReader
+
+            self._insertion_map = InsertionMapReader(_insertion_map_path)
+        else:
+            self._insertion_map = None
+        self._dataset_insertions: Optional[Dict[int, list]] = None
+        ### End Pretrain-Experiments Data Insertion ###
+
     @classmethod
     def wrap_numpy_dataset(
         cls,
@@ -541,6 +554,20 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         self._epoch = epoch
         self.build_and_save_global_indices(in_memory=in_memory)
 
+        ### Pretrain-Experiments Data Insertion ###
+        if self._insertion_map is not None:
+            global_indices = self.get_global_indices()
+            self._dataset_insertions = {}
+            for training_idx in self._insertion_map.get_all_indices():
+                if training_idx < len(global_indices):
+                    dataset_idx = int(global_indices[training_idx])
+                    self._dataset_insertions[dataset_idx] = self._insertion_map.load(training_idx)
+            log.info(
+                "Data insertion enabled: remapped %d insertions to dataset indices",
+                len(self._dataset_insertions),
+            )
+        ### End Pretrain-Experiments Data Insertion ###
+
     def get_mock_batch(self) -> Dict[str, Any]:
         device = torch.device("cpu")
         rng = torch.Generator(device=device)
@@ -603,9 +630,20 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
     def _get_dataset_item(self, idx: int) -> Dict[str, Any]:
         item = self.dataset[idx]
         if isinstance(item, dict):
-            return dict(**item, index=idx)
+            item = dict(**item, index=idx)
         else:
-            return {"input_ids": item, "index": idx}
+            item = {"input_ids": item, "index": idx}
+
+        ### Pretrain-Experiments Data Insertion ###
+        if self._dataset_insertions is not None and idx in self._dataset_insertions:
+            for pos, token_ids in self._dataset_insertions[idx]:
+                end = min(pos + len(token_ids), len(item["input_ids"]))
+                item["input_ids"][pos:end] = torch.tensor(
+                    token_ids[: end - pos], dtype=item["input_ids"].dtype
+                )
+        ### End Pretrain-Experiments Data Insertion ###
+
+        return item
 
     def _format_fname_from_fields(self, prefix: str, **fields) -> str:
         parts = [prefix]
