@@ -23,11 +23,16 @@ class InsertionMapReader:
         self._f = None
         with h5py.File(hdf5_path, "r") as f:
             keys = f["keys"][:]
+            self.num_indices = len(keys)
+            self.num_tuples = f["positions"].shape[0]
+            self.total_tokens = f["tokens"].shape[0]
         self._key_to_idx = {int(k): i for i, k in enumerate(keys)}
         log.info(
-            "Loaded insertion map from '%s' with %d indices",
+            "InsertionMapReader initialized from '%s': %d sequences with insertions, "
+            "%d total tokens to insert",
             hdf5_path,
-            len(keys),
+            self.num_indices,
+            self.total_tokens,
         )
 
     def has_index(self, index: int) -> bool:

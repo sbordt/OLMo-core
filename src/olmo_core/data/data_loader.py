@@ -392,6 +392,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         if _insertion_map_path:
             from .insertion_map import InsertionMapReader
 
+            log.info("Data insertion enabled via OLMO_CORE_INSERTION_MAP_FILE='%s'", _insertion_map_path)
             self._insertion_map = InsertionMapReader(_insertion_map_path)
         else:
             self._insertion_map = None
@@ -558,13 +559,24 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         if self._insertion_map is not None:
             global_indices = self.get_global_indices()
             self._dataset_insertions = {}
+            _num_skipped = 0
             for training_idx in self._insertion_map.get_all_indices():
                 if training_idx < len(global_indices):
                     dataset_idx = int(global_indices[training_idx])
                     self._dataset_insertions[dataset_idx] = self._insertion_map.load(training_idx)
+                else:
+                    _num_skipped += 1
+            _num_tokens = sum(
+                sum(len(toks) for _, toks in entries)
+                for entries in self._dataset_insertions.values()
+            )
             log.info(
-                "Data insertion enabled: remapped %d insertions to dataset indices",
+                "Data insertion reshuffle: remapped %d/%d insertions to dataset indices "
+                "(%d tokens to insert, %d skipped as out of range)",
                 len(self._dataset_insertions),
+                self._insertion_map.num_indices,
+                _num_tokens,
+                _num_skipped,
             )
         ### End Pretrain-Experiments Data Insertion ###
 
