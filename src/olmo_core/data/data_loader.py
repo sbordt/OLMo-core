@@ -648,9 +648,15 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         if self._dataset_insertion_indices is not None and idx in self._dataset_insertion_indices:
             training_idx = self._dataset_insertion_indices[idx]
             for pos, token_ids in self._insertion_map.load(training_idx):
-                end = min(pos + len(token_ids), len(item["input_ids"]))
+                if pos + len(token_ids) > len(item["input_ids"]):
+                    raise RuntimeError(
+                        f"Data insertion error: insertion at position {pos} with {len(token_ids)} tokens "
+                        f"exceeds sequence length {len(item['input_ids'])} for dataset index {idx}. "
+                        f"This indicates a bug in the insertion map construction."
+                    )
+                end = pos + len(token_ids)
                 item["input_ids"][pos:end] = torch.tensor(
-                    token_ids[: end - pos], dtype=item["input_ids"].dtype
+                    token_ids, dtype=item["input_ids"].dtype
                 )
         ### End Pretrain-Experiments Data Insertion ###
 
