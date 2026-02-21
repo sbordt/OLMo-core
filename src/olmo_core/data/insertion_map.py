@@ -63,4 +63,13 @@ class InsertionMapReader:
             self._f.close()
             self._f = None
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_f"] = None  # h5py handles cannot be pickled
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # _f will be reopened lazily on next load() call
+
 ### End Pretrain-Experiments Data Insertion ###

@@ -396,7 +396,7 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             self._insertion_map = InsertionMapReader(_insertion_map_path)
         else:
             self._insertion_map = None
-        self._dataset_insertions: Optional[Dict[int, list]] = None
+        self._dataset_insertion_indices: Optional[Dict[int, int]] = None
         ### End Pretrain-Experiments Data Insertion ###
 
     @classmethod
@@ -558,24 +558,22 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
         ### Pretrain-Experiments Data Insertion ###
         if self._insertion_map is not None:
             global_indices = self.get_global_indices()
-            self._dataset_insertions = {}
+            # Only build dataset_idx → training_idx mapping here;
+            # actual tokens are read lazily from the HDF5 in _get_dataset_item.
+            self._dataset_insertion_indices: Dict[int, int] = {}
             _num_skipped = 0
             for training_idx in self._insertion_map.get_all_indices():
                 if training_idx < len(global_indices):
                     dataset_idx = int(global_indices[training_idx])
-                    self._dataset_insertions[dataset_idx] = self._insertion_map.load(training_idx)
+                    self._dataset_insertion_indices[dataset_idx] = training_idx
                 else:
                     _num_skipped += 1
-            _num_tokens = sum(
-                sum(len(toks) for _, toks in entries)
-                for entries in self._dataset_insertions.values()
-            )
             log.info(
                 "Data insertion reshuffle: remapped %d/%d insertions to dataset indices "
                 "(%d tokens to insert, %d skipped as out of range)",
-                len(self._dataset_insertions),
+                len(self._dataset_insertion_indices),
                 self._insertion_map.num_indices,
-                _num_tokens,
+                self._insertion_map.total_tokens,
                 _num_skipped,
             )
         ### End Pretrain-Experiments Data Insertion ###
@@ -647,8 +645,9 @@ class NumpyDataLoaderBase(TextDataLoaderBase):
             item = {"input_ids": item, "index": idx}
 
         ### Pretrain-Experiments Data Insertion ###
-        if self._dataset_insertions is not None and idx in self._dataset_insertions:
-            for pos, token_ids in self._dataset_insertions[idx]:
+        if self._dataset_insertion_indices is not None and idx in self._dataset_insertion_indices:
+            training_idx = self._dataset_insertion_indices[idx]
+            for pos, token_ids in self._insertion_map.load(training_idx):
                 end = min(pos + len(token_ids), len(item["input_ids"]))
                 item["input_ids"][pos:end] = torch.tensor(
                     token_ids[: end - pos], dtype=item["input_ids"].dtype
