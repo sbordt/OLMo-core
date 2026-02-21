@@ -1,6 +1,7 @@
 ### Pretrain-Experiments Data Insertion ###
 
 import logging
+import threading
 from typing import List, Optional, Tuple
 
 import h5py
@@ -16,11 +17,15 @@ class InsertionMapReader:
 
     The HDF5 file contains 5 flat arrays (optimized format):
         /keys, /tuple_offsets, /positions, /token_offsets, /tokens
+
+    Thread-safe: h5py is not thread-safe, so each thread gets its own file
+    handle via threading.local().  Handles are opened lazily and excluded
+    from pickle so that DataLoader worker processes each get their own.
     """
 
     def __init__(self, hdf5_path: str):
         self.hdf5_path = hdf5_path
-        self._f = None
+        self._local = threading.local()
         with h5py.File(hdf5_path, "r") as f:
             keys = f["keys"][:]
             self.num_indices = len(keys)
@@ -41,35 +46,38 @@ class InsertionMapReader:
     def get_all_indices(self) -> list:
         return list(self._key_to_idx.keys())
 
+    def _get_file(self):
+        """Get a per-thread h5py file handle, opening lazily on first access."""
+        f = getattr(self._local, "f", None)
+        if f is None:
+            f = h5py.File(self.hdf5_path, "r")
+            self._local.f = f
+        return f
+
     def load(self, index: int) -> Optional[List[Tuple[int, List[int]]]]:
         if not self.has_index(index):
             return None
-        if self._f is None:
-            self._f = h5py.File(self.hdf5_path, "r")
+        f = self._get_file()
         idx = self._key_to_idx[index]
-        t_start = int(self._f["tuple_offsets"][idx])
-        t_end = int(self._f["tuple_offsets"][idx + 1])
+        t_start = int(f["tuple_offsets"][idx])
+        t_end = int(f["tuple_offsets"][idx + 1])
         result = []
         for t in range(t_start, t_end):
-            pos = int(self._f["positions"][t])
-            tok_start = int(self._f["token_offsets"][t])
-            tok_end = int(self._f["token_offsets"][t + 1])
-            tokens = self._f["tokens"][tok_start:tok_end].tolist()
+            pos = int(f["positions"][t])
+            tok_start = int(f["token_offsets"][t])
+            tok_end = int(f["token_offsets"][t + 1])
+            tokens = f["tokens"][tok_start:tok_end].tolist()
             result.append((pos, tokens))
         return result
 
-    def close(self):
-        if self._f is not None:
-            self._f.close()
-            self._f = None
-
     def __getstate__(self):
         state = self.__dict__.copy()
-        state["_f"] = None  # h5py handles cannot be pickled
+        state["_local"] = None  # thread-local state cannot be pickled
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        # _f will be reopened lazily on next load() call
+        self._local = threading.local()
+        # each thread will open its own file handle lazily via _get_file()
 
 ### End Pretrain-Experiments Data Insertion ###
